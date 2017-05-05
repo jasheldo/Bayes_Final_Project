@@ -1,0 +1,79 @@
+---
+title: "Bayesian modeling and prediction for movies"
+Author: "James Sheldon"
+Date: "`r format(Sys.Date(), '%A, %B %d, %Y'`""
+output: 
+  html_document: 
+    fig_height: 4
+    highlight: pygments
+    theme: spacelab
+---
+
+## Setup
+
+### Load packages
+
+```{r load-packages, message = FALSE}
+library(tidyverse)
+library(statsr)
+library(BAS)
+```
+
+### Load data
+
+Make sure your data and R Markdown files are in the same directory. When loaded
+your data file will be called `movies`. Delete this note when before you submit 
+your work. 
+
+```{r load-data}
+#load("movies.Rdata")
+```
+
+
+
+* * *
+
+## Part 1: Data
+
+
+* * *
+
+## Part 2: Data manipulation
+
+```{r}
+movies <- movies %>% mutate("feature_film" = "no", "drama" = "no", "mpaa_rating_R" = "no", "oscar_season" = "no", "summer_season" = "no")
+movies$feature_film[movies$title_type == "Feature Film"] <- "yes"
+movies$drama[movies$genre == "Drama"] <- "yes"
+movies$mpaa_rating_R[movies$mpaa_rating == "R"] <- "yes"
+movies$oscar_season[movies$thtr_rel_month %in% c(10, 11, 12)] <- "yes"
+movies$summer_season[movies$thtr_rel_month %in% c(5, 6, 7, 8)] <- "yes"
+```
+
+* * *
+
+## Part 3: Exploratory data analysis
+
+NOTE: Insert code chunks as needed by clicking on the "Insert a new code chunk" 
+button above. Make sure that your code is visible in the project you submit. 
+Delete this note when before you submit your work.
+
+* * *
+
+## Part 4: Modeling
+
+NOTE: Insert code chunks as needed by clicking on the "Insert a new code chunk" 
+button above. Make sure that your code is visible in the project you submit. 
+Delete this note when before you submit your work.
+
+* * *
+
+## Part 5: Prediction
+
+NOTE: Insert code chunks as needed by clicking on the "Insert a new code chunk" 
+button above. Make sure that your code is visible in the project you submit. 
+Delete this note when before you submit your work.
+
+* * *
+
+## Part 6: Conclusion
+
