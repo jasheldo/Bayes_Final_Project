@@ -1,7 +1,7 @@
 ---
 title: "Bayesian modeling and prediction for movies"
 Author: "James Sheldon"
-Date: "`r format(Sys.Date(), '%A, %B %d, %Y'`""
+Date: "`r format(Sys.Date(), '%A, %B %d, %Y')`"
 output: 
   html_document: 
     fig_height: 4
@@ -16,64 +16,290 @@ output:
 ```{r load-packages, message = FALSE}
 library(tidyverse)
 library(statsr)
+library(GGally)
 library(BAS)
 ```
 
 ### Load data
 
-Make sure your data and R Markdown files are in the same directory. When loaded
-your data file will be called `movies`. Delete this note when before you submit 
-your work. 
-
 ```{r load-data}
-#load("movies.Rdata")
+load("movies.Rdata")
 ```
-
-
 
 * * *
 
 ## Part 1: Data
 
+The intro to the [codebook](https://d18ky98rnyall9.cloudfront.net/_73393031e98b997cf2445132f89606a1_movies_codebook.html?Expires=1491782400&Signature=Ktyh7Iw1y6RxnOxH8--VYDeC~xxZtzS1yb4fJPi9qfIveiIIoBNsv~S23d2x8OTZRAl4yCLD3g99p~LCyYkDrZ711OP9CDLYbfBbhj0EYmeurdzuhZRLRCyaZMBgZQQuH-7sZ9A0H7Uj4EvY3mhlFYWeY77HtqeZHIc0PJAdiIw_&Key-Pair-Id=APKAJLTNE6QMUY6HBC5A) says it best:
+
+> The data set is comprised of 651 randomly sampled movies produced and released before 2016.
+>
+> Some of these variables are only there for informational purposes and do not make any sense to include in a statistical analysis. It is up to you to decide which variables are meaningful and which should be omitted. For example information in the the actor1 through actor5 variables was used to determine whether the movie casts an actor or actress who won a best actor or actress Oscar.
+>
+> You might also choose to omit certain observations or restructure some of the variables to make them suitable for answering your research questions.
+>
+> When you are fitting a model you should also be careful about collinearity, as some of these variables may be dependent on each other.
+
+Because the data is observational in nature, no causal statements can be made from it. However, since it is observational and definitely less than 10% of all movies made in the time period being considered, the conclusions made here can reasonably be extended to the population as a whole.
+
+That said, it is worth noting there is a degree of risk using this data to extend to the general population. There is selection risk in the data. The people who filled in the data are the ones that specifically went to the website because they were compelled to do so. No everyone in the population has access to the Internet nor are interested in submitting this information. Further, only the people wishing to enter this information are doing so. Thus, there is no random assignment in this data.
 
 * * *
 
 ## Part 2: Data manipulation
 
-```{r}
+Per instruction, we will be mutating a few variables and removing others that we know, prior to analysis, are not useful in predicting `audience_score`. This will leave us with a data frame consisting of 651 observations of 17 variables.
+
+```{r warning=FALSE}
 movies <- movies %>% mutate("feature_film" = "no", "drama" = "no", "mpaa_rating_R" = "no", "oscar_season" = "no", "summer_season" = "no")
 movies$feature_film[movies$title_type == "Feature Film"] <- "yes"
 movies$drama[movies$genre == "Drama"] <- "yes"
 movies$mpaa_rating_R[movies$mpaa_rating == "R"] <- "yes"
 movies$oscar_season[movies$thtr_rel_month %in% c(10, 11, 12)] <- "yes"
 movies$summer_season[movies$thtr_rel_month %in% c(5, 6, 7, 8)] <- "yes"
+movies <- movies %>% select(feature_film, drama, runtime, mpaa_rating_R, thtr_rel_year, oscar_season, summer_season, imdb_rating, 
+                            imdb_num_votes, critics_score, best_pic_nom, best_pic_win, best_actor_win, best_actress_win, 
+                            best_dir_win, top200_box, audience_score)
+summary(movies)
 ```
 
 * * *
 
 ## Part 3: Exploratory data analysis
 
-NOTE: Insert code chunks as needed by clicking on the "Insert a new code chunk" 
-button above. Make sure that your code is visible in the project you submit. 
-Delete this note when before you submit your work.
+```{r warning=FALSE, message=FALSE}
+ggpairs(movies, columns = c("audience_score", "feature_film", "drama"), title = "imdb_rating vs critic_score vs audience_score")
+```
+
+It's interesting to note that for almost all films not rated as a feature film, scores are very high. Let's see how the remaining new variables stack up to `audience_score`. 
+
+```{r warning=FALSE, message=FALSE}
+ggpairs(movies, columns = c("audience_score", "mpaa_rating_R", "oscar_season", "summer_season"), title = "imdb_rating vs critic_score vs audience_score")
+```
+
+It looks like the distribution of films among the other variables is quite uniform. This is a helpful condition check for Bayesian analysis.
 
 * * *
 
 ## Part 4: Modeling
 
-NOTE: Insert code chunks as needed by clicking on the "Insert a new code chunk" 
-button above. Make sure that your code is visible in the project you submit. 
-Delete this note when before you submit your work.
+Let's start modeling. To begin with we are going to use 90% of the movie data, with `NA` values removed, as training data for each of four types of estimators: **BMA**, **HPM**, **MPM**, and **BPM**. We'll then use the model generated under each estimator to fit the remaining 10% of the data and analyze the results to find the best fitting model for our needs.
+
+```{r, warning=FALSE, message=FALSE}
+set.seed(1024)
+
+movies_no_na <- na.omit(movies)
+
+n = nrow(movies_no_na)
+n_cv = 50
+ape = matrix(NA, ncol = 4, nrow = n_cv)
+colnames(ape) <- c("BMA", "BPM", "HPM", "MPM")
+
+for (i in 1:n_cv) {
+    train = sample(1:n, size = round(.9 * n), replace = FALSE)
+    audience_train = movies_no_na[train,]
+    audience_test = movies_no_na[-train,]
+    
+    bma_train_movies <- bas.lm(audience_score ~ . -audience_score, data = audience_train,
+                               prior = "BIC", modelprior = uniform(), initprobs="eplogp")
+    yhat_bma = predict(bma_train_movies, audience_test, estimator = "BMA")$fit
+    yhat_hpm = predict(bma_train_movies, audience_test, estimator = "HPM")$fit
+    yhat_mpm = predict(bma_train_movies, audience_test, estimator = "MPM")$fit
+    yhat_bpm = predict(bma_train_movies, audience_test, estimator = "BPM")$fit
+    ape[i, "BMA"] <- cv.summary.bas(yhat_bma, audience_test$audience_score)
+    ape[i, "BPM"] <- cv.summary.bas(yhat_bpm, audience_test$audience_score)
+    ape[i, "HPM"] <- cv.summary.bas(yhat_hpm, audience_test$audience_score)
+    ape[i, "MPM"] <- cv.summary.bas(yhat_mpm, audience_test$audience_score)
+}
+```
+
+```{r}
+as.data.frame(ape) %>% gather("model", "n", 1:4) %>% 
+    ggplot(mapping = aes(x = model, y = n)) + 
+    geom_boxplot(outlier.colour = "red", outlier.shape = 1)
+```
+
+We can see the distribution of values is pretty uniform.
+
+```{r}
+apply(ape, 2, mean)
+```
+
+And we can see from the above that the **BMA** model edged out the other three in predictive performance. For what it's worth, they're all very close. How do the residuals stack up?
+
+```{r}
+bma_audience = bas.lm(audience_score ~ . -audience_score, data = movies_no_na,
+                   prior = "BIC", 
+                   modelprior = uniform())
+plot(bma_audience, which=1)
+```
+```{r}
+plot(bma_audience, which=2)
+```
+
+Based on the residuals, it doesn't appear as though prediction accuracy is very high for movies with historical values less than 40. Also notable is the identification of some potential outliers. Data points 126, 216 and 251 could be outliers which skew the results on the low end. We'll explore this later but for now suffice it to say more exploration is warranted.
+
+The following two graphs take a look at the cumulative probabilities and model complexity against the resulting log of the marginal values. There are very clear bandings happening and it looks like as model dimension increases, so does your marginal results.
+
+```{r}
+plot(bma_audience, which=3)
+```
+
+```{r}
+plot(bma_audience, which=4)
+```
+
+The above BMA plot shows the variables with the highest predictive probabilities. In this case, `imdb_rating` and `critics_score` both have a very high predictive probability and should thus be included in the final model.
+
+```{r}
+summary(bma_audience)
+```
+
+A look at the model summaries above illustrates that the lowest Bayes Factor is observed when we consider `runtime`, `mpaa_rating_R`, `imdb_rating` and `critics_score`. This should yield our ideal model.
+
+```{r}
+image(bma_audience, rotate = F)
+```
+
+The above plot confirms our notion as the model with the highest rank includes our four predictors and yields the lowest Log Posterior Odds.
+
+For each of the following graphs, the vertical bar represents the posterior probability that the coefficient is 0 while the bell shaped curve represents the density of plausible values from all the models where the coefficient is non-zero. You can see for our four predictor variables, there is hardly any area under the curve at $x = 0$. This is the desired behavior.
+
+```{r}
+coef_bma <- coef(bma_audience)
+plot(coef_bma, ask = F)
+```
+
+The above credible intervals for the coefficients is based on the mixture model. The box plots below is simply the visualization of these intervals.
+
+```{r}
+confint(coef_bma)
+```
+
+```{r warning=FALSE, error=FALSE, message=FALSE}
+plot(confint(coef_bma))
+```
+
+Now let's take a look at some fitted values versus their predicted values. If all goes as planned then they will be in perfect alignment.
+
+```{r}
+muhat.BMA <- fitted(bma_audience, estimator = "BMA")
+BMA <- predict(bma_audience, estimator = "BMA")
+```
+
+```{r}
+par(mar = c(9,9,3,3))
+plot(muhat.BMA, BMA$fit,
+     pch=16,
+     xlab = expression(hat(mu[i])), ylab = expression(hat(Y[i])))
+abline(0,1)
+```
+
+Now let's take a look at those outliers.
+
+
+```{r}
+set.seed(1024)
+n = nrow(movies_no_na)
+audience_outliers = cbind(movies_no_na, diag(1, nrow=n))
+outliers_audience = bas.lm(audience_score ~ . -audience_score, data=audience_outliers, 
+                        prior="ZS-null", a=n,
+                        modelprior=tr.beta.binomial(a=1, b=1, trunc=n/2),
+                        method="MCMC",
+                        initprobs="marg-eplogp",
+                        MCMC.iterations=500000, n.models=2^15
+                        )
+```
+
+```{r}
+diagnostics(outliers_audience, type="pip")
+```
+
+```{r}
+outliers_audience$namesx[outliers_audience$probne0 > .5]
+```
+
+
 
 * * *
 
 ## Part 5: Prediction
 
-NOTE: Insert code chunks as needed by clicking on the "Insert a new code chunk" 
-button above. Make sure that your code is visible in the project you submit. 
-Delete this note when before you submit your work.
+Here we'll explore a few model options and the merits of each.
+
+**highest probability model**
+
+```{r}
+HPM <- predict(bma_audience, estimator = "HPM")
+HPM$bestmodel
+```
+
+The above list shows the indices of the variables in the best model. 0 is the intercept.
+
+```{r}
+(bma_audience$namesx[HPM$bestmodel + 1])[-1]
+```
+
+Instead of the indices, list the variable names.
+
+**median probability model**
+
+```{r warning=FALSE, message=FALSE, error=FALSE}
+MPM <- predict(bma_audience, estimator = "MPM")
+(bma_audience$namesx[attr(MPM$fit, 'model') + 1])[-1]
+```
+
+As with the highest probability model, let's look at the list of variable names in the best model.
+
+**best predictive model**
+
+Here we have the model that is the closest to BMA prediction under squared error loss.
+
+```{r}
+BPM <- predict(bma_audience, estimator = "BPM")
+(bma_audience$namesx[attr(BPM$fit, 'model') + 1])[-1]
+```
+
+
+Finally, let's compare all of these models.
+
+```{r}
+ggpairs(data.frame(HPM = as.vector(HPM$fit),
+                   MPM = as.vector(MPM$fit),
+                   BPM = as.vector(BPM$fit), 
+                   BMA = as.vector(BMA$fit)))
+```
+
+BMA looks like the way to go and we'll be using that for the movie prediction. Our movie of choise is going to be Star Wars Rogue One.
+
+```{r}
+imdb_rating <- 7.9
+critics_score <- 85
+feature_film <- "yes"
+drama <- "no"
+runtime <- 133
+mpaa_rating_R <- "no"
+thtr_rel_year <- 2016
+oscar_season <- "yes"
+summer_season <- "no"
+imdb_num_votes <- 314436
+best_pic_nom <- "no"
+best_pic_win <- "no"
+best_actor_win <- "no"
+best_actress_win <- "no"
+best_dir_win <- "no"
+top200_box <- "yes"
+new_data <- data.frame(imdb_rating, critics_score, feature_film, drama)
+
+new_prediction <- predict(bma_audience, newdata = new_data, estimator = "MPM")
+new_prediction[1]
+```
+Our model gave this movie a score of 85.01% based on `imdb_rating` and `critics_score`. The actual score on Rotten Tomatoes at the time of this writing is 88%. Not a bad estimate.
 
 * * *
 
 ## Part 6: Conclusion
 
+The `movies` data set provides a number of categorical and numeric variables for movies in a wide time range. Given the proper elements we can use that information to construct a predictive model for movies that do not exist in our data set. These predictions can help us project many important characteristics of a movie such as its financial success.
+
+The Bayesian model provided much more accurate results than the frequentest model. Plus, with its ability to be scaleable, it offers much more flexibility for continued use than a static frequentest model.
